@@ -1,0 +1,166 @@
+---
+title: "Untitled"
+output:
+  pdf_document: default
+  html_document: default
+date: "2023-11-29"
+---
+
+```{r}
+library(tidyverse)
+library(glmnet)
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(dummy)
+library(iml)
+```
+
+# Part 2
+
+```{r}
+toyota = read.csv("/Users/sam-schachtman/Desktop/ToyotaCorolla.csv")
+dim(toyota)
+```
+
+```{r}
+length(unique(toyota$Model))
+```
+
+```{r}
+toyota = toyota %>%
+  select(-Id, -Model, -Mfg_Month, -Cylinders, -Quarterly_Tax) %>%
+  rename(Age = Age_08_04) %>%
+  rename(Year = Mfg_Year) %>%
+  mutate_at(vars(Fuel_Type, Color, Year),
+            .funs = factor)
+```
+
+```{r}
+missing_ct = apply(toyota, MARGIN = 2, FUN = function(x) sum(is.na(x)))
+missing_ct
+```
+
+```{r}
+toyota <- as.data.frame(model.matrix(~ . - 1, data = toyota))
+```
+
+# Part 3
+
+```{r}
+toyota = mutate(toyota, lnPrice = log(Price))
+toyota %>%
+  ggplot(aes(lnPrice)) +
+  geom_histogram(color = "red", bg = "red4") +
+  labs(title = "Distribution of Selling Prices",
+       x = "Selling price of Car",
+       y = "Count of Cars") +
+  theme_classic()
+```
+
+# Part 4
+
+```{r}
+featurePlot(x = select(toyota, Age, KM, HP, CC, Doors, Gears, Weight), toyota$lnPrice)
+```
+
+# Part 5
+
+```{r}
+toyota %>%
+  select(-Price) %>%
+  cor() %>%
+  corrplot::corrplot(., tl.cex = 0.5, type = "lower",)
+```
+
+```{r}
+toyota = toyota %>%
+  select(-Boardcomputer, -Fuel_TypePetrol, -Central_Lock, -Radio_cassette)
+```
+
+# Part 6
+
+```{r}
+toyota = toyota %>%
+  select(-Price)
+```
+
+```{r}
+set.seed(5970)
+samp = createDataPartition(toyota$lnPrice, p = 0.70, list = FALSE)
+train = toyota[samp, ]
+test = toyota[-samp, ]
+rm(samp)
+```
+
+# Part 7
+
+```{r}
+tree = train(lnPrice ~ .,
+             data = train,
+             method = "rpart",
+             trControl = trainControl(method = "cv", number = 10),
+             tuneGrid = expand.grid(cp = seq(0.0, 0.01, 0.0001)),
+             control = rpart.control(minbucket = 1)
+             )
+
+plot(tree)
+```
+
+```{r}
+rpart.plot(tree$finalModel)
+```
+
+# Part 8
+
+```{r}
+predict = Predictor$new(tree,
+                        data = test,
+                        y = test$lnPrice)
+
+imp = iml::FeatureImp$new(predict, loss = "rmse", compare = "ratio")
+plot(imp)
+```
+
+```{r}
+imp$results %>%
+  filter(importance > 1)
+```
+
+# Part 9
+
+```{r}
+train_new = dplyr::select(train, Age, HP, KM, Weight, Powered_Windows, ColorWhite,
+                          Metallic_Rim, Airco, Airbag_2, lnPrice)
+
+tree_new = caret::train(lnPrice ~ .,
+                 data = train_new,
+                 method = "rpart",
+                 trControl = trainControl(method = "cv", number = 10),
+                 tuneGrid = expand.grid(cp = seq(0.0, 0.01, 0.0001)),
+                 control = rpart.control(minbucket = 1)
+                 )
+
+plot(tree_new)
+```
+
+```{r}
+train_er = postResample(predict(tree_new, train), train$lnPrice)[["RMSE"]]
+cv_er = min(tree_new$results$RMSE)
+test_er = postResample(predict(tree_new, test), test$lnPrice)[["RMSE"]]
+
+data.frame(
+  "Error Source" = c("Training", "Cross-Validation", "Testing"),
+  "RMSE" = c(train_er, cv_er, test_er)
+)
+```
+
+1) In this data set, we have 39 total variables that exist in the data set. Thankfully, we do not have any missing values from the data. so we can continue with building our model
+
+2) We used both the initial price variable as well as the log transformed price variable because of the fact that the original price variable has a slight left skew according to the distribution of selling prices.
+
+3) According to the correlation plot that we built, the two variables that are higher correlated are the weight variables and the board computer variables. It makes sense because the bigger the car is and the more extensive technology that is incorporated in the car, it would make sense that the car would have a higher price than other cars.
+
+4) With pre-pruning, it is very beneficial because it helps us prevent the tree we are building from becoming overly messy and complicated to understand. With post-pruning, it allows us to grow our tree to its full maximum, and also allow us to pruned back to its original size.
+
+5) The RMSE measures the average distance between the average price and the predicted price. Because we have a lower RMSE, this means that our pricing model has a higher accuracy of predicting prices. For the corolla model, we can feel better about our model knowing that the prices we predict are going to have a higher accuracy of being what we want.
